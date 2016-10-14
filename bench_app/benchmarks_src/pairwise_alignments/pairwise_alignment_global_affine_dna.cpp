@@ -5,11 +5,11 @@ using namespace seqan;
 int main(int argc, char **argv)
 {
     typedef Dna5String TSequence;
-    typedef Align<TSequence> TAlign;
+    typedef StringSet<Gaps<TSequence>> TGapSet;
 
-    auto compute = [] (TAlign & align) {
+    auto compute = [] (TGapSet & gapsSetH, TGapSet & gapsSetV){
         // match: 2, mismatch: -3, gap_extend: -3, gap_open: -1
-        return globalAlignment(align, Score<int>(2, -3, -3, -1));
+        return globalAlignment(gapsSetH, gapsSetV, Score<int>(2, -3, -3, -1), AlignConfig<>(), Gotoh());
     };
     return benchmark_pairwise_alignment_main<TSequence>("Benchmark: Global Pairwise Alignment with Affine Gap Model for DNA.", compute, argc, argv);
 }

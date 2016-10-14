@@ -67,29 +67,59 @@ inline int benchmark_pairwise_alignment_main(std::string infoText, TLambda compu
     readRecords(ids, sequences, seqFileIn);
     clear(ids);
 
+    unsigned const threads = options.threads;
     unsigned const len = length(sequences);
+    unsigned const maxAlignments = len * (len - 1) / 2;
+    unsigned const alignmentsPerThread = maxAlignments / threads + 1;
+    unsigned const lastBucketSize = maxAlignments - alignmentsPerThread * (threads - 1);
 
-    Align<TSequence> align;
-    resize(rows(align), 2);
+    // allocate data structures
+    std::vector<StringSet<Gaps<TSequence>>> gapsSetVectorH;
+    std::vector<StringSet<Gaps<TSequence>>> gapsSetVectorV;
+    String<String<int>> scores;
 
-    String<int> score;
-    resize(score, len*len);
+    resize(gapsSetVectorH, threads);
+    resize(gapsSetVectorV, threads);
+    resize(scores, threads);
 
-    SEQAN_OMP_PRAGMA(parallel for firstprivate(align))
-    for (int m = 0; m < len; m++)
-    for (int n = m + 1; n < len; n++)
+    for (int jobId = 0; jobId < threads; jobId++)
     {
-        assignSource(row(align, 0), sequences[m]);
-        assignSource(row(align, 1), sequences[n]);
-
-        score[m * len + n] = computeAlignment(align);
+        auto bucketSize = jobId < threads - 1 ? alignmentsPerThread : lastBucketSize;
+        resize(gapsSetVectorH[jobId], bucketSize);
+        resize(gapsSetVectorV[jobId], bucketSize);
+        // don't allocate scores[jobId], because this will be done in
+        // computeAlignment by every thread
     }
 
-    //serial output score
+    // initialize data structures
+    for (int m = 0, k = 0; m < len; m++)
+    for (int n = m + 1; n < len; n++, k++)
+    {
+        auto jobId = k / alignmentsPerThread;
+        auto currentJob = k % alignmentsPerThread;
+
+        auto & gapsH = gapsSetVectorH[jobId][currentJob];
+        auto & gapsV = gapsSetVectorV[jobId][currentJob];
+        assignSource(gapsH, sequences[m]);
+        assignSource(gapsV, sequences[n]);
+    }
+
+    // compute data structures
+    SEQAN_OMP_PRAGMA(parallel for)
+    for (int jobId = 0; jobId < threads; ++jobId)
+    {
+        scores[jobId] = computeAlignment(gapsSetVectorH[jobId], gapsSetVectorV[jobId]);
+    }
+
+    //serial output scores
     std::ofstream ofs(toCString(options.output), std::ofstream::out);
-    for (int m = 0; m < len; m++)
-    for (int n = m + 1; n < len; n++)
-        ofs << m << ", " << n << ": " << score[m * len + n] << std::endl;
+    for (int m = 0, k = 0; m < len; m++)
+    for (int n = m + 1; n < len; n++, k++)
+    {
+        auto jobId = k / alignmentsPerThread;
+        auto currentJob = k % alignmentsPerThread;
+        ofs << m << ", " << n << ": " << scores[jobId][currentJob] << std::endl;
+    }
 
     return 0;
 }
